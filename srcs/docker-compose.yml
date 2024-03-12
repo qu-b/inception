@@ -1,0 +1,154 @@
+version: '3'
+
+networks:
+  inception:
+    driver: bridge
+
+volumes:
+  mariadb:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/qu-b/data/mariadb
+  wordpress:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/qu-b/data/wordpress
+  restic:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/qu-b/data/restic
+
+services:
+  #MARIADB
+  mariadb:
+    container_name: mariadb
+    volumes:
+      - mariadb:/var/lib/mysql
+    image: mariadb
+    build:
+      context: ./requirements/mariadb
+      args:
+        MYSQL_DATABASE: ${MYSQL_DATABASE}
+        MYSQL_USER: ${MYSQL_USER}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    env_file:
+      - .env
+    networks:
+      - inception
+    restart: on-failure
+    expose:
+      - "3306"
+
+  #WORDPRESS
+  wordpress:
+    container_name: wordpress
+    volumes:
+      - wordpress:/var/www/html
+    image: wordpress
+    build:
+      context: ./requirements/wordpress
+      args:
+        MYSQL_DATABASE: ${MYSQL_DATABASE}
+        MYSQL_USER: ${MYSQL_USER}
+        MYSQL_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    depends_on:
+      - mariadb
+    networks:
+      - inception
+    restart: on-failure
+    env_file:
+      - .env
+    expose:
+      - "9000"
+
+  #NGINX
+  nginx:
+    container_name: nginx
+    volumes:
+      - wordpress:/var/www/html
+    build: ./requirements/nginx
+    image: nginx
+    depends_on:
+      - wordpress
+    ports:
+      - "443:443"
+    env_file:
+      - .env
+    networks:
+      - inception
+    restart: on-failure
+
+  # BONUS
+  # Redis Cache for WordPress
+  redis:
+    build: ./requirements/redis
+    container_name: redis
+    image: redis
+    networks:
+      - inception
+    depends_on:
+      - wordpress
+
+
+  # FTP Server
+  ftp:
+    build: 
+      context: ./requirements/ftp
+      args:
+        FTP_USER: ${FTP_USER}
+        FTP_PASSWORD: ${FTP_PASSWORD}
+    container_name: ftp
+    image: ftp
+    volumes:
+      - wordpress:/var/www/html
+    ports:
+      - "21:21"
+      - "10000-10100:10000-10100"
+    networks:
+      - inception
+    depends_on:
+      - wordpress
+
+  # Static Website
+  static-website:
+    build: ./requirements/static-website
+    image: static-website
+    container_name: static-website
+    ports:
+      - "8081:8081"
+    networks:
+      - inception
+
+  # Adminer
+  adminer:
+    build:
+      context: ./requirements/adminer
+    container_name: adminer
+    image: adminer
+    networks:
+      - inception
+    ports:
+      - "8080:80"
+    depends_on:
+      - mariadb
+
+  # Restic
+  restic:
+    environment:
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD}
+    build: ./requirements/restic
+    volumes:
+      - restic:/home/qu-b/data/restic
+      - mariadb:/backup/mariadb
+      - wordpress:/backup/wordpress
+    container_name: restic
+    image: restic
+    networks:
+      - inception
